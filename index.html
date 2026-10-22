@@ -22,6 +22,7 @@
       </div>
     </div>
     <input class="search" id="q" type="search" placeholder="ค้นหาวัตถุดิบ…">
+    <div class="chips" id="cats"></div>
     <div id="list"><div class="loading">กำลังโหลดรายการ…</div></div>
   </main>
 
@@ -31,7 +32,7 @@
     <div id="review"></div>
     <div class="card">
       <label class="field">หมายเหตุถึงซัพ (ถ้ามี)
-        <textarea id="note" rows="2" maxlength="300" placeholder="เช่น ส่งก่อน 9 โมง"></textarea>
+        <textarea id="note" rows="2" maxlength="300"></textarea>
       </label>
     </div>
   </main>
@@ -62,6 +63,7 @@
     let qty = {};          // { ชื่อวัตถุดิบ: จำนวน }
     let step = 'pick';
     let sending = false;
+    let cat = '';          // หมวดหมู่ที่เลือก ('' = ทั้งหมด)
 
     (async () => {
       try {
@@ -77,6 +79,7 @@
         // ลบของใน draft ที่ไม่มีแล้ว
         const names = new Set(ingredients.map(i => i.name));
         Object.keys(qty).forEach(k => { if (!names.has(k)) delete qty[k]; });
+        renderCats();
         renderList();
         updateBar();
       } catch (e) {
@@ -89,23 +92,39 @@
       return new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Bangkok' });
     }
 
+    // ปุ่มเลือกหมวดหมู่ (ตามคอลัมน์ หมวดหมู่ ใน Google Sheets)
+    function renderCats() {
+      const cats = [...new Set(ingredients.map(i => i.category || 'อื่นๆ'))];
+      $('#cats').innerHTML = ['', ...cats].map(c =>
+        `<button type="button" class="chip ${c === cat ? 'on' : ''}" data-cat="${esc(c)}">${c ? esc(c) : 'ทั้งหมด'}</button>`).join('');
+    }
+    $('#cats').addEventListener('click', e => {
+      const b = e.target.closest('.chip');
+      if (!b) return;
+      cat = b.dataset.cat;
+      renderCats();
+      renderList();
+      window.scrollTo(0, 0);
+    });
+
     function renderList() {
       const term = $('#q').value.trim().toLowerCase();
       const groups = {};
       ingredients
-        .filter(i => !term || [i.name, i.detail, i.category].join(' ').toLowerCase().includes(term))
-        .forEach(i => (groups[i.supplier] = groups[i.supplier] || []).push(i));
-      const sups = Object.keys(groups);
-      if (!sups.length) { $('#list').innerHTML = '<div class="empty">ไม่พบรายการ</div>'; return; }
-      $('#list').innerHTML = sups.map(s => `
-        <h2 class="sup">${esc(short(s))}</h2>
-        <div class="card">${groups[s].map(rowHtml).join('')}</div>`).join('');
+        .filter(i => !cat || (i.category || 'อื่นๆ') === cat)
+        .filter(i => !term || [i.name, i.category].join(' ').toLowerCase().includes(term))
+        .forEach(i => { const c = i.category || 'อื่นๆ'; (groups[c] = groups[c] || []).push(i); });
+      const keys = Object.keys(groups);
+      if (!keys.length) { $('#list').innerHTML = '<div class="empty">ไม่พบรายการ</div>'; return; }
+      $('#list').innerHTML = keys.map(c => `
+        <h2 class="sup">${esc(c)}</h2>
+        <div class="card">${groups[c].map(rowHtml).join('')}</div>`).join('');
     }
 
     function rowHtml(i) {
       const v = qty[i.name] || '';
       return `<div class="row ${v ? 'has' : ''}" data-name="${esc(i.name)}">
-        <div class="name">${esc(i.name)}<div class="unit">${esc([i.detail, i.unit].filter(Boolean).join(' · '))}</div></div>
+        <div class="name">${esc(i.name)}<div class="unit">${esc(i.unit)}</div></div>
         <div class="stepper">
           <button type="button" data-d="-1" aria-label="ลด">−</button>
           <input type="number" inputmode="decimal" min="0" step="any" value="${v}" aria-label="จำนวน ${esc(i.name)}">
@@ -159,7 +178,7 @@
         Object.keys(groups).map(s => `
           <h2 class="sup">${esc(short(s))} · ${groups[s].length} รายการ</h2>
           <div class="card list-review">${groups[s].map(i => `
-            <div class="row"><div class="name">${esc(i.name)}${i.detail ? `<div class="unit">${esc(i.detail)}</div>` : ''}</div><b>${fmtQty(qty[i.name])} ${esc(i.unit)}</b></div>`).join('')}
+            <div class="row"><div class="name">${esc(i.name)}</div><b>${fmtQty(qty[i.name])} ${esc(i.unit)}</b></div>`).join('')}
           </div>`).join('');
     }
 

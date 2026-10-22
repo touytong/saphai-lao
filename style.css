@@ -24,7 +24,11 @@ label.field input, label.field textarea, .search {
   display: block; width: 100%; margin-top: 4px; font: inherit; color: var(--ink);
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff;
 }
-.search { margin: 0 0 12px; }
+.search { margin: 0 0 10px; }
+.chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; margin-bottom: 2px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink); }
+.chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 700; }
 .locked { margin-top: 4px; padding: 10px 12px; border-radius: 10px; background: #F3ECE5; color: var(--ink); font-weight: 700; }
 .locked::after { content: ' 🔒'; font-weight: 400; }
 h2.sup { font-size: 15px; margin: 18px 0 6px; color: var(--brand); }
