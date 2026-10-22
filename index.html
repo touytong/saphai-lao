@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>สั่งของ · สะใภ้ลาว</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>สั่งวัตถุดิบ</h1>
+    <div class="sub" id="who">กำลังโหลด…</div>
+  </header>
+
+  <!-- 1) เลือกรายการ -->
+  <main id="v-pick" data-view>
+    <div class="card">
+      <div class="field" style="margin:0">วันที่สั่ง
+        <div class="locked" id="today">–</div>
+      </div>
+    </div>
+    <input class="search" id="q" type="search" placeholder="ค้นหาวัตถุดิบ…">
+    <div id="list"><div class="loading">กำลังโหลดรายการ…</div></div>
+  </main>
+
+  <!-- 2) ตรวจทานก่อนส่ง -->
+  <main id="v-review" data-view hidden>
+    <p class="hint">ตรวจรายการก่อนส่ง ระบบจะแยกส่งเข้ากลุ่ม LINE ของแต่ละซัพให้อัตโนมัติ</p>
+    <div id="review"></div>
+    <div class="card">
+      <label class="field">หมายเหตุถึงซัพ (ถ้ามี)
+        <textarea id="note" rows="2" maxlength="300" placeholder="เช่น ส่งก่อน 9 โมง"></textarea>
+      </label>
+    </div>
+  </main>
+
+  <!-- 3) ส่งแล้ว -->
+  <main id="v-done" data-view hidden>
+    <div class="done">
+      <div class="big">✅</div>
+      <h2>ส่งใบสั่งของแล้ว</h2>
+      <div id="result"></div>
+      <button class="btn block" onclick="closeApp()">ปิด</button>
+    </div>
+  </main>
+
+  <div class="bar" id="bar">
+    <div class="info" id="barInfo"><b>0</b> รายการ</div>
+    <button class="btn ghost" id="btnBack" hidden>แก้ไข</button>
+    <button class="btn" id="btnNext" disabled>ถัดไป</button>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="config.js"></script>
+  <script src="common.js"></script>
+  <script>
+    const DRAFT = 'saphai-order-draft';
+    let ingredients = [];
+    let qty = {};          // { ชื่อวัตถุดิบ: จำนวน }
+    let step = 'pick';
+    let sending = false;
+
+    (async () => {
+      try {
+        const me = await startLiff(CFG.LIFF_ORDER);
+        $('#who').textContent = 'ผู้สั่ง: ' + me.displayName;
+
+        $('#today').textContent = todayTH();
+        const draft = store.get(DRAFT) || {};
+        qty = draft.qty || {};
+
+        const r = await api('getIngredients');
+        ingredients = r.data;
+        // ลบของใน draft ที่ไม่มีแล้ว
+        const names = new Set(ingredients.map(i => i.name));
+        Object.keys(qty).forEach(k => { if (!names.has(k)) delete qty[k]; });
+        renderList();
+        updateBar();
+      } catch (e) {
+        $('#list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+      }
+    })();
+
+    // วันที่ปัจจุบันตามเวลาไทย (แสดงผลเท่านั้น — วันที่จริงที่บันทึกมาจากฝั่งระบบ)
+    function todayTH() {
+      return new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Bangkok' });
+    }
+
+    function renderList() {
+      const term = $('#q').value.trim().toLowerCase();
+      const groups = {};
+      ingredients
+        .filter(i => !term || [i.name, i.detail, i.category].join(' ').toLowerCase().includes(term))
+        .forEach(i => (groups[i.supplier] = groups[i.supplier] || []).push(i));
+      const sups = Object.keys(groups);
+      if (!sups.length) { $('#list').innerHTML = '<div class="empty">ไม่พบรายการ</div>'; return; }
+      $('#list').innerHTML = sups.map(s => `
+        <h2 class="sup">${esc(short(s))}</h2>
+        <div class="card">${groups[s].map(rowHtml).join('')}</div>`).join('');
+    }
+
+    function rowHtml(i) {
+      const v = qty[i.name] || '';
+      return `<div class="row ${v ? 'has' : ''}" data-name="${esc(i.name)}">
+        <div class="name">${esc(i.name)}<div class="unit">${esc([i.detail, i.unit].filter(Boolean).join(' · '))}</div></div>
+        <div class="stepper">
+          <button type="button" data-d="-1" aria-label="ลด">−</button>
+          <input type="number" inputmode="decimal" min="0" step="any" value="${v}" aria-label="จำนวน ${esc(i.name)}">
+          <button type="button" data-d="1" aria-label="เพิ่ม">+</button>
+        </div></div>`;
+    }
+
+    function setQty(name, v, row) {
+      v = Math.max(0, Math.round(Number(v) * 100) / 100 || 0);
+      if (v) qty[name] = v; else delete qty[name];
+      if (row) {
+        row.classList.toggle('has', !!v);
+        const inp = row.querySelector('input');
+        if (document.activeElement !== inp) inp.value = v || '';
+      }
+      store.set(DRAFT, { qty });
+      updateBar();
+    }
+
+    $('#list').addEventListener('click', e => {
+      const b = e.target.closest('button[data-d]');
+      if (!b) return;
+      const row = b.closest('.row');
+      setQty(row.dataset.name, (qty[row.dataset.name] || 0) + Number(b.dataset.d), row);
+    });
+    $('#list').addEventListener('input', e => {
+      if (e.target.matches('input')) { const row = e.target.closest('.row'); setQty(row.dataset.name, e.target.value, row); }
+    });
+    $('#q').addEventListener('input', renderList);
+
+    function updateBar() {
+      const n = Object.keys(qty).length;
+      if (step === 'pick') {
+        $('#barInfo').innerHTML = `<b>${n}</b> รายการ`;
+        $('#btnNext').textContent = 'ถัดไป';
+        $('#btnNext').disabled = !n;
+        $('#btnBack').hidden = true;
+      } else if (step === 'review') {
+        const sups = new Set(ingredients.filter(i => qty[i.name]).map(i => i.supplier)).size;
+        $('#barInfo').innerHTML = `<b>${n}</b> รายการ · ${sups} ซัพ`;
+        $('#btnNext').textContent = sending ? 'กำลังส่ง…' : 'ส่งใบสั่งของ';
+        $('#btnNext').disabled = sending;
+        $('#btnBack').hidden = sending;
+      }
+    }
+
+    function renderReview() {
+      const groups = {};
+      ingredients.filter(i => qty[i.name]).forEach(i => (groups[i.supplier] = groups[i.supplier] || []).push(i));
+      $('#review').innerHTML = `<div class="card">วันที่สั่ง <b>${esc(todayTH())}</b></div>` +
+        Object.keys(groups).map(s => `
+          <h2 class="sup">${esc(short(s))} · ${groups[s].length} รายการ</h2>
+          <div class="card list-review">${groups[s].map(i => `
+            <div class="row"><div class="name">${esc(i.name)}${i.detail ? `<div class="unit">${esc(i.detail)}</div>` : ''}</div><b>${fmtQty(qty[i.name])} ${esc(i.unit)}</b></div>`).join('')}
+          </div>`).join('');
+    }
+
+    $('#btnBack').onclick = () => { step = 'pick'; show('v-pick'); updateBar(); };
+
+    $('#btnNext').onclick = async () => {
+      if (step === 'pick') {
+        step = 'review'; renderReview(); show('v-review'); updateBar();
+        return;
+      }
+      if (step !== 'review' || sending) return;
+      sending = true; updateBar();
+      try {
+        const r = await api('submitOrder', {
+          note: $('#note').value,
+          items: Object.keys(qty).map(name => ({ name, qty: qty[name] })),
+        });
+        store.del(DRAFT);
+        $('#result').innerHTML = `<p>วันที่สั่ง ${esc(r.orderDate)} เวลา ${esc(r.orderTime)}</p><ul>` + r.orders.map(o =>
+          `<li><b>${esc(o.orderNo)}</b> · ${esc(short(o.supplier))} ${o.sent ? '' : `<div class="warn">⚠ ส่ง LINE ไม่สำเร็จ: ${esc(o.reason)} (บันทึกในระบบแล้ว)</div>`}</li>`
+        ).join('') + '</ul>';
+        step = 'done'; show('v-done'); $('#bar').hidden = true;
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        sending = false; updateBar();
+      }
+    };
+  </script>
+</body>
+</html>

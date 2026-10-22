@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>รับของ · สะใภ้ลาว</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>ตรวจรับของ</h1>
+    <div class="sub" id="who">กำลังโหลด…</div>
+  </header>
+
+  <!-- 1) รายการออเดอร์ที่รอรับ -->
+  <main id="v-list" data-view>
+    <div id="orders"><div class="loading">กำลังโหลด…</div></div>
+  </main>
+
+  <!-- 2) เช็คลิสต์ -->
+  <main id="v-check" data-view hidden>
+    <div class="card" id="head"></div>
+    <p class="hint">แตะรายการที่ <b>ไม่ได้รับ</b> ให้เป็นสีแดง (ค่าเริ่มต้น = รับ)</p>
+    <div id="items"></div>
+  </main>
+
+  <!-- 3) เสร็จ -->
+  <main id="v-done" data-view hidden>
+    <div class="done">
+      <div class="big" id="doneIcon">✅</div>
+      <h2 id="doneTitle"></h2>
+      <p id="doneText"></p>
+      <button class="btn block" id="btnMore">ตรวจรับออเดอร์อื่น</button>
+      <p></p>
+      <button class="btn ghost block" onclick="closeApp()">ปิด</button>
+    </div>
+  </main>
+
+  <div class="bar" id="bar" hidden>
+    <div class="info" id="barInfo"></div>
+    <button class="btn ghost" id="btnBack">กลับ</button>
+    <button class="btn" id="btnSubmit">ยืนยัน</button>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="config.js"></script>
+  <script src="common.js"></script>
+  <script>
+    let orders = [];
+    let current = null;
+    let rejected = new Set();
+    let sending = false;
+
+    (async () => {
+      try {
+        const me = await startLiff(CFG.LIFF_RECEIVE);
+        $('#who').textContent = 'ผู้ตรวจรับ: ' + me.displayName;
+        await loadOrders();
+      } catch (e) {
+        $('#orders').innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+      }
+    })();
+
+    async function loadOrders() {
+      $('#orders').innerHTML = '<div class="loading">กำลังโหลด…</div>';
+      const r = await api('getPending');
+      orders = r.data;
+      if (!orders.length) {
+        $('#orders').innerHTML = '<div class="empty">ไม่มีออเดอร์ที่รอรับของ 🎉</div>';
+        return;
+      }
+      $('#orders').innerHTML = '<p class="hint">ออเดอร์ที่รอรับของ ' + orders.length + ' รายการ</p>' +
+        orders.map((o, i) => `
+          <button class="card order" data-i="${i}">
+            <div class="no">${esc(short(o.supplier))}</div>
+            <div class="meta">${esc(o.orderNo)} · สั่ง ${esc(o.orderDate)} ${esc(o.orderTime)} · ${o.items.length} รายการ</div>
+            <div class="meta">สั่งโดย ${esc(o.orderedBy)}</div>
+          </button>`).join('');
+    }
+
+    $('#orders').addEventListener('click', e => {
+      const b = e.target.closest('.order');
+      if (!b) return;
+      current = orders[Number(b.dataset.i)];
+      rejected = new Set();
+      $('#head').innerHTML = `<b>${esc(short(current.supplier))}</b><div class="hint" style="margin:0">${esc(current.orderNo)} · สั่ง ${esc(current.orderDate)} ${esc(current.orderTime)}${current.note ? ' · ' + esc(current.note) : ''}</div>`;
+      renderItems();
+      show('v-check');
+      $('#bar').hidden = false;
+      updateBar();
+    });
+
+    function renderItems() {
+      $('#items').innerHTML = current.items.map((it, i) => {
+        const no = rejected.has(it.name);
+        return `<button class="check ${no ? 'no' : ''}" data-i="${i}">
+          <div class="name" style="flex:1">${esc(it.name)} <span class="unit">${fmtQty(it.qty)} ${esc(it.unit)}${it.detail ? ' · ' + esc(it.detail) : ''}</span></div>
+          <span class="tag">${no ? 'ไม่รับ' : 'รับ'}</span></button>`;
+      }).join('');
+    }
+
+    $('#items').addEventListener('click', e => {
+      const b = e.target.closest('.check');
+      if (!b || sending) return;
+      const name = current.items[Number(b.dataset.i)].name;
+      rejected.has(name) ? rejected.delete(name) : rejected.add(name);
+      renderItems();
+      updateBar();
+    });
+
+    function updateBar() {
+      const n = current ? current.items.length : 0;
+      const bad = rejected.size;
+      $('#barInfo').innerHTML = `รับ <b>${n - bad}</b> · ไม่รับ <b style="color:var(--bad)">${bad}</b>`;
+      $('#btnSubmit').textContent = sending ? 'กำลังบันทึก…' : (bad ? 'ยืนยัน + แจ้งปัญหา' : 'รับครบ');
+      $('#btnSubmit').disabled = sending;
+      $('#btnBack').hidden = sending;
+    }
+
+    $('#btnBack').onclick = () => { show('v-list'); $('#bar').hidden = true; current = null; };
+
+    $('#btnSubmit').onclick = async () => {
+      if (sending || !current) return;
+      sending = true; updateBar();
+      try {
+        const r = await api('submitReceive', { orderNo: current.orderNo, rejected: [...rejected] });
+        if (r.status === 'received') {
+          $('#doneIcon').textContent = '✅';
+          $('#doneTitle').textContent = 'รับของครบแล้ว';
+          $('#doneText').textContent = current.orderNo + ' · ' + r.received + ' รายการ';
+        } else {
+          $('#doneIcon').textContent = '⚠️';
+          $('#doneTitle').textContent = 'บันทึกแล้ว · ไม่รับ ' + r.rejected + ' รายการ';
+          $('#doneText').textContent = r.notified
+            ? 'แจ้งเข้ากลุ่มแจ้งปัญหาแล้ว'
+            : 'บันทึกในระบบแล้ว แต่ส่ง LINE ไม่สำเร็จ: ' + (r.notifyError || '');
+        }
+        show('v-done'); $('#bar').hidden = true;
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        sending = false; updateBar();
+      }
+    };
+
+    $('#btnMore').onclick = async () => {
+      current = null; show('v-list');
+      try { await loadOrders(); } catch (e) { toast(e.message); }
+    };
+  </script>
+</body>
+</html>
