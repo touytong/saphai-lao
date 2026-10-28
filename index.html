@@ -63,7 +63,7 @@
     let qty = {};          // { ชื่อวัตถุดิบ: จำนวน }
     let step = 'pick';
     let sending = false;
-    let cat = '';          // หมวดหมู่ที่เลือก ('' = ทั้งหมด)
+    let cat = '';          // ซัพที่เลือก ('' = ทั้งหมด)
 
     (async () => {
       try {
@@ -92,11 +92,11 @@
       return new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Bangkok' });
     }
 
-    // ปุ่มเลือกหมวดหมู่ (ตามคอลัมน์ หมวดหมู่ ใน Google Sheets)
+    // ปุ่มเลือกซัพพลายเออร์ (ตามคอลัมน์ LINE GROUP ใน Google Sheets)
     function renderCats() {
-      const cats = [...new Set(ingredients.map(i => i.category || 'อื่นๆ'))];
+      const cats = [...new Set(ingredients.map(i => i.supplier))];
       $('#cats').innerHTML = ['', ...cats].map(c =>
-        `<button type="button" class="chip ${c === cat ? 'on' : ''}" data-cat="${esc(c)}">${c ? esc(c) : 'ทั้งหมด'}</button>`).join('');
+        `<button type="button" class="chip ${c === cat ? 'on' : ''}" data-cat="${esc(c)}">${c ? esc(short(c)) : 'ทั้งหมด'}</button>`).join('');
     }
     $('#cats').addEventListener('click', e => {
       const b = e.target.closest('.chip');
@@ -111,13 +111,13 @@
       const term = $('#q').value.trim().toLowerCase();
       const groups = {};
       ingredients
-        .filter(i => !cat || (i.category || 'อื่นๆ') === cat)
-        .filter(i => !term || [i.name, i.category].join(' ').toLowerCase().includes(term))
-        .forEach(i => { const c = i.category || 'อื่นๆ'; (groups[c] = groups[c] || []).push(i); });
+        .filter(i => !cat || i.supplier === cat)
+        .filter(i => !term || [i.name, i.category, short(i.supplier)].join(' ').toLowerCase().includes(term))
+        .forEach(i => (groups[i.supplier] = groups[i.supplier] || []).push(i));
       const keys = Object.keys(groups);
       if (!keys.length) { $('#list').innerHTML = '<div class="empty">ไม่พบรายการ</div>'; return; }
       $('#list').innerHTML = keys.map(c => `
-        <h2 class="sup">${esc(c)}</h2>
+        <h2 class="sup">${esc(short(c))}</h2>
         <div class="card">${groups[c].map(rowHtml).join('')}</div>`).join('');
     }
 
